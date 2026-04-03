@@ -2,13 +2,15 @@
 
 Cross-chain token bridge via [Train Protocol](https://train.tech) HTLC atomic swaps, powered by [OWS](https://github.com/OpenWalletStandard) wallets for signing.
 
-## Install
+## Setup
+
+Requires Node.js >= 20 and the [OWS CLI](https://github.com/nicktids/ows) installed.
 
 ```bash
-npm install -g @open-wallet-standard/train
+npm install
+npm run build
+npm link        # makes `ows-train` available globally
 ```
-
-Requires Node.js >= 20 and the [OWS CLI](https://github.com/OpenWalletStandard/ows) installed.
 
 ## Commands
 
@@ -174,7 +176,7 @@ If the solver never locks, the user can **refund** after the timelock expires. I
 ## Library Usage
 
 ```typescript
-import { bridge, refund, redeem, payAndAccess } from '@open-wallet-standard/train'
+import { bridge, refund, redeem, payAndAccess } from './src/index.js'
 
 const result = await bridge({
   wallet: 'my-wallet',
