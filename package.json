@@ -1,0 +1,48 @@
+{
+  "name": "@open-wallet-standard/train",
+  "version": "0.1.0",
+  "description": "Train Protocol bridge integration for Open Wallet Standard",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "ows-train": "bin/bridge.mjs"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "skills",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "check:types": "tsc --noEmit",
+    "postinstall": "node scripts/postinstall.mjs"
+  },
+  "dependencies": {
+    "@open-wallet-standard/core": "^1.1.2",
+    "@solana/web3.js": "^1.95.0",
+    "@train-protocol/auth": "^0.1.0-dev.1",
+    "@train-protocol/evm": "^0.1.0-dev.3",
+    "@train-protocol/sdk": "^0.1.0-dev.4",
+    "@train-protocol/starknet": "^0.1.0-dev.0",
+    "npx": "^10.2.2",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
