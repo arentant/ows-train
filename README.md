@@ -1,10 +1,10 @@
 # ows-train
 
-Trustless cross-chain token bridge and x402 payment CLI. Uses [Train Protocol](https://train.tech) HTLC atomic swaps with [OWS](https://github.com/open-wallet-standard) wallets for signing — no custodians, no intermediaries.
+Trustless cross-chain token bridge and x402 payment CLI. Uses [Train Protocol](https://train.tech) HTLC atomic swaps with [OWS](https://openwallet.sh/) wallets for signing — no custodians, no intermediaries.
 
 ## Setup
 
-Requires Node.js >= 20 and the [OWS CLI](https://github.com/open-wallet-standard).
+Requires Node.js >= 20 and the [OWS CLI](https://github.com/open-wallet-standard/core).
 
 ```bash
 npm install
