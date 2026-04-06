@@ -1,10 +1,12 @@
-import { execFileSync } from 'node:child_process'
 import { isX402Response, parseX402Response, x402ToPaymentRequirements } from './402/x402/parser.js'
 import { isMPPResponse, parseMPPResponse, mppToPaymentRequirements } from './402/mpp/parser.js'
+import { createMPPPaymentHeaders } from './402/mpp/payment.js'
 import { bridge } from './bridge.js'
 import { resolveNetwork } from './network-resolver.js'
 import { TrainApiClient, formatUnits } from '@train-protocol/sdk'
+import { keccak256, encodeAbiParameters, pad, type Hex } from 'viem'
 import type { PaymentRequirements, PaymentConfig, PaymentResult } from './pay-types.js'
+import type { MPPPaymentRequired } from './402/mpp/types.js'
 
 /**
  * Parse an HTTP 402 response and return unified payment requirements.
@@ -15,20 +17,17 @@ export async function parsePaymentRequired(response: Response): Promise<PaymentR
         throw new Error(`Expected HTTP 402, got ${response.status}`)
     }
 
-    // Normalize headers to lowercase
     const headers: Record<string, string> = {}
     response.headers.forEach((value, key) => {
         headers[key.toLowerCase()] = value
     })
 
-    // Try MPP first (header-based detection is cheaper than parsing body)
     if (isMPPResponse(response.status, headers)) {
         const wwwAuth = headers['www-authenticate']
         const parsed = parseMPPResponse(wwwAuth)
         return mppToPaymentRequirements(parsed)
     }
 
-    // Try x402 — v2 header-based or v1 body-based detection
     const body = await response.json()
     if (isX402Response(response.status, headers, body)) {
         const parsed = parseX402Response(body, headers)
@@ -39,8 +38,7 @@ export async function parsePaymentRequired(response: Response): Promise<PaymentR
 }
 
 /**
- * Look up a token's symbol and decimals from the Train network metadata.
- * Matches by contract address against the network's token list.
+ * Look up a token's symbol and decimals from Train network metadata.
  */
 async function resolveAsset(
     network: string,
@@ -61,13 +59,12 @@ async function resolveAsset(
 }
 
 /**
- * Full flow: fetch URL → detect 402 → bridge funds → ows pay request.
+ * Full flow: fetch URL → detect 402 → bridge via Train → build x402 payment → retry.
  *
- * 1. Fetches the URL and checks for HTTP 402.
- * 2. Parses payment requirements (chain, token, amount).
- * 3. Resolves token symbol and decimals from Train network metadata.
- * 4. Bridges funds from the source chain to the wallet's own address on the payment chain.
- * 5. Calls `ows pay request` to handle the actual payment protocol (x402/MPP).
+ * The Train HTLC contract supports EIP-3009 transferWithAuthorization natively.
+ * After bridging, the HTLC params (hashlock, index, secret) are encoded as the
+ * EIP-3009 nonce and signature, so the facilitator can call transferWithAuthorization
+ * on the token contract to settle — no custom logic needed on the server side.
  */
 export async function payAndAccess(
     url: string,
@@ -75,7 +72,7 @@ export async function payAndAccess(
 ): Promise<PaymentResult> {
     const log = (msg: string) => config.onProgress?.(msg)
 
-    // 1. Initial request to detect 402
+    // 1. Initial request
     log(`Requesting ${url}...`)
     const initialResponse = await fetch(url, {
         method: config.method ?? 'GET',
@@ -97,7 +94,7 @@ export async function payAndAccess(
     const requirements = await parsePaymentRequired(initialResponse)
     log(`Payment required: ${requirements.protocol.toUpperCase()} — ${requirements.amount} on ${requirements.network} to ${requirements.recipient}`)
 
-    // 3. Resolve token from Train network metadata
+    // 3. Resolve token
     const apiClient = new TrainApiClient({ baseUrl: config.trainApiUrl })
     const { symbol: destTokenSymbol, decimals } = await resolveAsset(
         requirements.network,
@@ -107,9 +104,9 @@ export async function payAndAccess(
     const sourceTokenSymbol = config.sourceToken ?? destTokenSymbol
     const humanAmount = formatUnits(BigInt(requirements.amount), decimals)
 
-    log(`Bridging ${humanAmount} ${sourceTokenSymbol} → ${destTokenSymbol} to payment chain...`)
+    log(`Bridging ${humanAmount} ${sourceTokenSymbol} → ${destTokenSymbol} to ${requirements.recipient}...`)
 
-    // 4. Bridge funds to own wallet on the payment chain
+    // 4. Bridge funds to server's payTo address via Train
     const bridgeResult = await bridge({
         wallet: config.wallet,
         sourceChain: config.sourceChain,
@@ -117,10 +114,12 @@ export async function payAndAccess(
         token: sourceTokenSymbol,
         destinationToken: destTokenSymbol,
         receiveAmount: humanAmount,
+        destinationAddress: requirements.recipient,
         passphrase: config.passphrase,
         trainApiUrl: config.trainApiUrl,
         sourceRpcUrl: config.sourceRpcUrl,
         destinationRpcUrl: config.destinationRpcUrl,
+        includeReward: false,
         onProgress: (event) => log(`[bridge] ${event.message}`),
     })
 
@@ -128,46 +127,115 @@ export async function payAndAccess(
         throw new Error(`Bridge failed: ${bridgeResult.error}`)
     }
 
-    log('Bridge complete. Calling ows pay...')
+    // 5. Build payment headers
+    let paymentHeaders: Record<string, string>
 
-    // 5. Call `ows pay request` to handle the actual payment
-    const owsPayArgs = ['pay', 'request', url, '--wallet', config.wallet]
+    if (requirements.protocol === 'x402' && bridgeResult.secret && bridgeResult.trainContract) {
+        // Build EIP-3009 transferWithAuthorization params from HTLC data
+        // The Train contract supports this natively — nonce and signature are HTLC-derived
+        paymentHeaders = buildTrainX402Headers(
+            requirements,
+            bridgeResult.trainContract,
+            bridgeResult.hashlock,
+            1, // solver lock index
+            bridgeResult.secret,
+        )
+        log('Built PAYMENT-SIGNATURE with Train EIP-3009 authorization')
+    } else if (requirements.protocol === 'mpp') {
+        const mppRequired = requirements.raw as MPPPaymentRequired
+        const txHash = bridgeResult.destinationTxHash ?? bridgeResult.sourceTxHash
+        paymentHeaders = createMPPPaymentHeaders({ paymentRequired: mppRequired, txHash })
+        log('Built MPP payment headers')
+    } else {
+        throw new Error('Bridge completed but missing secret or trainContract for payment')
+    }
 
-    if (config.method && config.method !== 'GET') {
-        owsPayArgs.push('--method', config.method)
-    }
-    if (config.body) {
-        owsPayArgs.push('--body', config.body)
-    }
-    if (!config.passphrase) {
-        owsPayArgs.push('--no-passphrase')
-    }
+    // 6. Retry with payment header
+    log('Retrying request with payment...')
+    const retryResponse = await fetch(url, {
+        method: config.method ?? 'GET',
+        headers: {
+            ...config.headers,
+            ...paymentHeaders,
+        },
+        body: config.body,
+    })
 
-    const env = { ...process.env }
-    if (config.passphrase) {
-        env.OWS_PASSPHRASE = config.passphrase
-    }
-
-    let output: string
-    let success: boolean
-
-    try {
-        output = execFileSync('ows', owsPayArgs, {
-            encoding: 'utf-8',
-            env,
-            timeout: 60_000,
-        }).trim()
-        success = true
-    } catch (err: any) {
-        output = (err.stdout ?? '') + (err.stderr ?? '')
-        success = false
-    }
+    const output = await retryResponse.text()
 
     return {
-        success,
+        success: retryResponse.ok,
         output,
         protocol: requirements.protocol,
         bridgeResult,
         requirements,
+    }
+}
+
+/**
+ * Build x402 PAYMENT-SIGNATURE header using Train's EIP-3009 integration.
+ *
+ * The Train HTLC contract implements EIP-3009 transferWithAuthorization where:
+ *   nonce     = keccak256(abi.encode(hashlock, index))
+ *   signature = abi.encode(hashlock, index, secret, validAfter, validBefore)
+ *   from      = Train contract address (holds the locked funds)
+ *
+ * The facilitator calls transferWithAuthorization as normal — it doesn't
+ * need to know about Train or HTLCs.
+ */
+function buildTrainX402Headers(
+    requirements: PaymentRequirements,
+    trainContract: string,
+    hashlock: string,
+    index: number,
+    secret: string,
+): Record<string, string> {
+    const hashlockBytes32 = pad(hashlock as Hex, { size: 32 })
+    const secretBigInt = BigInt(pad(secret as Hex, { size: 32 }))
+    const indexBigInt = BigInt(index)
+
+    const raw = requirements.raw as { accepts?: Array<Record<string, unknown>> }
+    const accepted = raw?.accepts?.[0] ?? {}
+    const maxTimeout = (accepted as any).maxTimeoutSeconds ?? 300
+
+    const now = Math.floor(Date.now() / 1000)
+    const validAfter = BigInt(now - 10)
+    const validBefore = BigInt(now + maxTimeout)
+
+    // nonce = keccak256(abi.encode(hashlock, index))
+    const nonce = keccak256(
+        encodeAbiParameters(
+            [{ type: 'bytes32' }, { type: 'uint256' }],
+            [hashlockBytes32, indexBigInt],
+        ),
+    )
+
+    // signature = abi.encode(hashlock, index, secret, validAfter, validBefore)
+    const signature = encodeAbiParameters(
+        [{ type: 'bytes32' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
+        [hashlockBytes32, indexBigInt, secretBigInt, validAfter, validBefore],
+    )
+
+    const payload = {
+        x402Version: 2,
+        resource: (raw as any)?.resource,
+        accepted,
+        payload: {
+            signature,
+            authorization: {
+                from: trainContract,
+                to: requirements.recipient,
+                value: requirements.amount,
+                validAfter: validAfter.toString(),
+                validBefore: validBefore.toString(),
+                nonce,
+            },
+        },
+    }
+
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64')
+    return {
+        'X-PAYMENT': encoded,
+        'PAYMENT-SIGNATURE': encoded,
     }
 }

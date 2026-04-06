@@ -3,6 +3,8 @@
 import { parseArgs } from 'node:util'
 import { bridge, refund, redeem, payAndAccess } from '../src/index.js'
 
+const DEFAULT_API_URL = 'https://train-solver-station.lb.layerswap.io'
+
 // ── ANSI ─────────────────────────────────────────────────────────────
 
 const E = '\x1b'
@@ -240,18 +242,14 @@ ${B}OPTIONS${R}
       --hashlock <hash>     HTLC hashlock ${D}(required)${R}
       --token <symbol>      Token symbol ${D}(required)${R}
       --rpc-url <url>       RPC URL override
-      --api-url <url>       Train API URL ${D}(or TRAIN_API_URL env)${R}
+      --api-url <url>       Train API URL ${D}(default: Train Station)${R}
       --index <n>           Solver lock index ${D}(omit for user refund)${R}
   -h, --help                Show help
 `)
         process.exit(refundValues.help ? 0 : 1)
     }
 
-    const refundApiUrl = refundValues['api-url'] || process.env.TRAIN_API_URL
-    if (!refundApiUrl) {
-        console.error(`${RD}✗ --api-url or TRAIN_API_URL environment variable is required${R}`)
-        process.exit(1)
-    }
+    const refundApiUrl = refundValues['api-url'] || process.env.TRAIN_API_URL || DEFAULT_API_URL
 
     console.log()
     console.log(`  ${B}Train Protocol Refund${R}`)
@@ -316,18 +314,14 @@ ${B}OPTIONS${R}
       --secret <hex>        HTLC secret / preimage ${D}(required)${R}
       --token <symbol>      Token symbol ${D}(required)${R}
       --rpc-url <url>       RPC URL override
-      --api-url <url>       Train API URL ${D}(or TRAIN_API_URL env)${R}
+      --api-url <url>       Train API URL ${D}(default: Train Station)${R}
       --index <n>           Solver lock index ${D}(default: 0)${R}
   -h, --help                Show help
 `)
         process.exit(redeemValues.help ? 0 : 1)
     }
 
-    const redeemApiUrl = redeemValues['api-url'] || process.env.TRAIN_API_URL
-    if (!redeemApiUrl) {
-        console.error(`${RD}✗ --api-url or TRAIN_API_URL environment variable is required${R}`)
-        process.exit(1)
-    }
+    const redeemApiUrl = redeemValues['api-url'] || process.env.TRAIN_API_URL || DEFAULT_API_URL
 
     console.log()
     console.log(`  ${B}Train Protocol Redeem${R}`)
@@ -396,7 +390,7 @@ ${B}OPTIONS${R}
       --source-token <symbol>   Token to pay with on source chain ${D}(defaults to dest token)${R}
       --source-rpc <url>        Source chain RPC override
       --dest-rpc <url>          Destination chain RPC override
-      --api-url <url>           Train API URL ${D}(or TRAIN_API_URL env)${R}
+      --api-url <url>           Train API URL ${D}(default: Train Station)${R}
   -m, --method <method>         HTTP method ${D}(default: GET)${R}
   -H, --header <key:value>      HTTP header (repeatable)
   -d, --data <body>             Request body
@@ -410,11 +404,7 @@ ${B}FLOW${R}
         process.exit(payValues.help ? 0 : 1)
     }
 
-    const payApiUrl = payValues['api-url'] || process.env.TRAIN_API_URL
-    if (!payApiUrl) {
-        console.error(`${RD}✗ --api-url or TRAIN_API_URL environment variable is required${R}`)
-        process.exit(1)
-    }
+    const payApiUrl = payValues['api-url'] || process.env.TRAIN_API_URL || DEFAULT_API_URL
 
     // Build request headers
     const reqHeaders = {}
@@ -528,7 +518,7 @@ ${B}OPTIONS${R}
   -a, --amount <value>          Amount to lock on source ${D}(or use -r)${R}
   -r, --receive-amount <value>  Amount to receive on destination ${D}(or use -a)${R}
       --dest-address <addr>     Custom destination address
-      --api-url <url>           Train API URL ${D}(or TRAIN_API_URL env)${R}
+      --api-url <url>           Train API URL ${D}(default: Train Station)${R}
       --source-rpc <url>        Source chain RPC override
       --dest-rpc <url>          Destination chain RPC override
       --dest-token <symbol>     Destination token ${D}(defaults to --token)${R}
@@ -543,11 +533,7 @@ if (values.amount && values['receive-amount']) {
     process.exit(1)
 }
 
-const apiUrl = values['api-url'] || process.env.TRAIN_API_URL
-if (!apiUrl) {
-    console.error(`${RD}✗ --api-url or TRAIN_API_URL environment variable is required${R}`)
-    process.exit(1)
-}
+const apiUrl = values['api-url'] || process.env.TRAIN_API_URL || DEFAULT_API_URL
 
 // ── Progress ─────────────────────────────────────────────────────────
 
