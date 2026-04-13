@@ -22,7 +22,7 @@ metadata:
 
 # Train Protocol Bridge
 
-Cross-chain token bridging via Train Protocol HTLC atomic swaps, powered by OWS wallets for signing. Also supports paying for HTTP 402 (x402 / MPP) paywalled APIs by bridging funds cross-chain and delegating payment to `ows pay`.
+Cross-chain token bridging via Train Protocol HTLC atomic swaps, powered by OWS wallets for signing. Also supports paying for HTTP 402 (x402) paywalled APIs by bridging funds cross-chain — the Train HTLC contract natively supports EIP-3009, so the payment is settled via standard `transferWithAuthorization` without needing a separate payment step.
 
 ## When to use
 
@@ -34,7 +34,7 @@ Use this skill when:
 - The user asks to **bridge tokens between chains** (e.g. "bridge ETH from sepolia to arbitrum", "move assets cross-chain", "cross-chain swap")
 - The user asks to **refund** a stuck or timed-out HTLC lock
 - The user asks to **redeem** a solver lock manually using a secret
-- **An HTTP 402 paywall is encountered** and the user's wallet does NOT have enough funds on the payment chain — use `ows-train pay` to bridge funds from a chain where the user has balance, then pay. This is the primary use case: when `ows pay` alone would fail because funds are on the wrong chain, `ows-train pay` bridges first, then calls `ows pay`.
+- **An HTTP 402 paywall is encountered** — use `ows-train pay` to bridge funds from any chain and pay in one step. Train bridges funds to the server's address via HTLC, then builds an EIP-3009 `transferWithAuthorization` payload from the HTLC secret, which the x402 facilitator settles on-chain.
 - The user explicitly asks to pay with tokens on a different chain than what the server requires
 
 ## Important Agent Instructions
@@ -56,7 +56,7 @@ Use this skill when:
 | `ows-train bridge` | Lock funds and bridge tokens across chains |
 | `ows-train refund` | Refund a locked HTLC after timelock expires |
 | `ows-train redeem` | Redeem a solver lock using the HTLC secret |
-| `ows-train pay` | Bridge funds then pay via `ows pay` (x402/MPP) |
+| `ows-train pay` | Bridge funds cross-chain and pay x402/MPP paywalls |
 
 ## Bridge
 
@@ -80,7 +80,7 @@ ows-train bridge \
 | `--token` | | Token symbol (e.g. ETH, USDC) | Yes |
 | `--amount` | `-a` | Amount to lock on source chain (e.g. "0.001") | One of `-a` or `-r` |
 | `--receive-amount` | `-r` | Amount to receive on destination chain | One of `-a` or `-r` |
-| `--api-url` | | Train API URL | No (env: `TRAIN_API_URL`) |
+| `--api-url` | | Train API URL (default: Train Station) | No |
 | `--source-rpc` | | Source chain RPC override | No |
 | `--dest-rpc` | | Destination chain RPC override | No |
 | `--dest-address` | | Custom destination address (defaults to wallet's own) | No |
@@ -96,8 +96,7 @@ ows-train bridge \
   -f sepolia \
   -t base-sepolia \
   --token ETH \
-  -a 0.005 \
-  --api-url https://train-solver-station.lb.layerswap.io
+  -a 0.005
 
 # Bridge ETH to USDC cross-chain
 ows-train bridge \
@@ -106,8 +105,7 @@ ows-train bridge \
   -t base-sepolia \
   --token ETH \
   --dest-token USDC \
-  -r 10 \
-  --api-url https://train-solver-station.lb.layerswap.io
+  -r 10
 
 # Bridge to a specific destination address
 ows-train bridge \
@@ -116,8 +114,7 @@ ows-train bridge \
   -t arbitrum-sepolia \
   --token ETH \
   -a 0.001 \
-  --dest-address 0xYourDestAddress \
-  --api-url https://train-solver-station.lb.layerswap.io
+  --dest-address 0xYourDestAddress
 ```
 
 ## Refund
@@ -141,7 +138,7 @@ ows-train refund \
 | `--chain` | `-c` | Chain where funds are locked | Yes |
 | `--hashlock` | | HTLC hashlock | Yes |
 | `--token` | | Token symbol | Yes |
-| `--api-url` | | Train API URL | No (env: `TRAIN_API_URL`) |
+| `--api-url` | | Train API URL (default: Train Station) | No |
 | `--rpc-url` | | RPC URL override | No |
 | `--index` | | Solver lock index (omit for user refund) | No |
 
@@ -153,8 +150,7 @@ ows-train refund \
   -w agent-treasury \
   -c sepolia \
   --hashlock 0xabc123... \
-  --token ETH \
-  --api-url https://train-solver-station.lb.layerswap.io
+  --token ETH
 ```
 
 ## Redeem
@@ -180,7 +176,7 @@ ows-train redeem \
 | `--hashlock` | | HTLC hashlock | Yes |
 | `--secret` | | HTLC secret / preimage | Yes |
 | `--token` | | Token symbol | Yes |
-| `--api-url` | | Train API URL | No (env: `TRAIN_API_URL`) |
+| `--api-url` | | Train API URL (default: Train Station) | No |
 | `--rpc-url` | | RPC URL override | No |
 | `--index` | | Solver lock index (default: 0) | No |
 
@@ -193,19 +189,18 @@ ows-train redeem \
   -c base-sepolia \
   --hashlock 0xabc123... \
   --secret 0xdef456... \
-  --token USDC \
-  --api-url https://train-solver-station.lb.layerswap.io
+  --token USDC
+
 ```
 
 ## Pay (HTTP 402)
 
-Bridge funds to the payment chain, then call `ows pay request` to handle the x402/MPP payment protocol.
+Bridge funds to the server's address cross-chain, then settle via x402 using Train's EIP-3009 integration. The HTLC secret is encoded as the EIP-3009 nonce/signature, so the facilitator settles with a standard `transferWithAuthorization` call.
 
 ```bash
 ows-train pay <url> \
   -w <wallet-name> \
-  --source-chain <chain> \
-  --api-url <train-api-url>
+  --source-chain <chain>
 ```
 
 ### Pay Options
@@ -216,7 +211,7 @@ ows-train pay <url> \
 | `--wallet` | `-w` | OWS wallet name | Yes |
 | `--source-chain` | `-f` | Chain where your funds are | Yes |
 | `--source-token` | | Token to pay with on source chain | No |
-| `--api-url` | | Train API URL | No (env: `TRAIN_API_URL`) |
+| `--api-url` | | Train API URL (default: Train Station) | No |
 | `--source-rpc` | | Source chain RPC override | No |
 | `--dest-rpc` | | Destination chain RPC override | No |
 | `--method` | `-m` | HTTP method (default: GET) | No |
@@ -225,26 +220,26 @@ ows-train pay <url> \
 
 ### Pay Flow
 
-1. Fetch URL → detect HTTP 402 payment requirements (chain, token, amount)
+1. Fetch URL → detect HTTP 402 → parse `PAYMENT-REQUIRED` header (chain, token, amount, payTo)
 2. Resolve token info from Train network metadata
-3. Bridge funds from source chain to wallet's own address on the payment chain
-4. Call `ows pay request` to complete the payment (x402 signing / MPP proof)
+3. Bridge funds from source chain to server's `payTo` address via Train HTLC
+4. Build EIP-3009 `transferWithAuthorization` params from HTLC data (nonce = hash of hashlock+index, signature = ABI-encoded hashlock+index+secret+validity)
+5. Send `PAYMENT-SIGNATURE` header → facilitator calls `transferWithAuthorization` on-chain → access granted
 
 ### Pay Examples
 
 ```bash
-# Pay for a paywalled API — auto-detects protocol, bridges cross-chain
+# Pay for a paywalled API — bridges ETH from Sepolia, pays USDC on Base Sepolia
 ows-train pay https://www.x402.org/protected \
   -w agent-treasury \
   --source-chain sepolia \
-  --api-url https://train-solver-station.lb.layerswap.io
+  --source-token ETH
 
-# Pay using ETH from Sepolia for a USDC-denominated endpoint
+# Pay using a specific source token
 ows-train pay https://api.example.com/premium \
   -w agent-treasury \
   --source-chain sepolia \
-  --source-token ETH \
-  --api-url https://train-solver-station.lb.layerswap.io
+  --source-token ETH
 ```
 
 ### When to use `pay` vs `bridge`
